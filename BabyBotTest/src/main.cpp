@@ -25,6 +25,7 @@ motor frontLeft(PORT4);
 motor rearRight(PORT1, true);
 motor rearLeft(PORT3);
 motor armMotor(PORT5);
+gyro gyro1(Brain.ThreeWirePort.H);
 
 
 // USE INCHES!!!
@@ -33,12 +34,11 @@ const float WHEEL_CIRCUMFERENCE = 3.25 * PI;
 
 const float TRACK_WIDTH = 7.5; // Width between right and left wheels
 const float WHEEL_BASE = 4.5; // Length between front and back
-const float DIAGONAL = sqrt(pow(TRACK_WIDTH, 2) + pow(WHEEL_BASE, 2)); // Calculate DIAGONAL distance between nonadjacent wheels using pythagorean theorum
-const float CIRCUMFERENCE = DIAGONAL*PI; // Calculate CIRCUMFERENCE of circle in which the wheel.
+const float DIAGONAL = sqrt(pow(TRACK_WIDTH, 2) + pow(WHEEL_BASE, 2)); // Calculate diagonal distance between nonadjacent wheels using pythagorean theorum
+const float CIRCUMFERENCE = DIAGONAL*PI; // Calculate circumference of circle in which the wheel.
 
-
-static float angle = 0;
-
+const static float ARM_MAX = 30;
+const static float ARM_MIN = 0;
 
 
 float inchesToTicks(float inches) {
@@ -48,18 +48,16 @@ float inchesToTicks(float inches) {
 }
 
 
-float addAngle(float degrees) {
-  float angle = 0;
-  angle += degrees;
-  while (angle >= 360) angle-=360;
-  while (angle < -0) angle -= 360;
-  return angle;
+float angleWrap(float degrees) {
+  // Keeps angle within range 0 to 360 while preserving angle measure
+  while (degrees >= 360) degrees -=360;
+  while (degrees < -0) degrees -= 360;
+  return degrees;
 
 }
 
 
-
-void setMotors(float leftSpeed, float rightSpeed) {
+void setMotorSides(float leftSpeed, float rightSpeed) {
   frontRight.spin(fwd, rightSpeed, velocityUnits::pct);
   frontLeft.spin(fwd, leftSpeed, velocityUnits::pct);
   rearRight.spin(fwd, rightSpeed, velocityUnits::pct);
@@ -87,24 +85,29 @@ void clearEncoders(){
 }
 
 
-void forwardForInches(float inches, int speed) {
+void forwardForInches(float inches, int speed, bool wait = true) {
   float ticks = inchesToTicks(inches);
 
   frontRight.startRotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
   frontLeft.startRotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
   rearRight.startRotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
   rearLeft.rotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
+  // Start motor and move on if wait == false, else wait for target to be reached and stop motors
+  if (!wait) {
+    rearLeft.startRotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
 
-  stopBase();
-  task::sleep(25);
+  } else {
+    rearLeft.rotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
+    stopBase();
+  }
+  task::sleep(15);
 
 
 }
 
 
-
 void forwardGradual(float inches, int maxSpeed, int accelTime) {
-  float ticks = inchesToTicks(inches - 12);
+  float ticks = inchesToTicks(inches);
   float increment = 1;
   float speed = increment;
 
@@ -125,11 +128,11 @@ void forwardGradual(float inches, int maxSpeed, int accelTime) {
     controller1.Screen.print(speed);
   }
 
-  float deaccelPoint = ticks - increment*maxSpeed;
+  float deaccelPoint = ticks - (increment*maxSpeed);
 
   while ((frontRight.rotation(deg)+frontLeft.rotation(deg)+rearRight.rotation(deg)+rearLeft.rotation(deg))/4 < deaccelPoint) {
     // Wait until the moment when motor rotation is the correct degrees away from desired wheel rotation.
-    controller1.Screen.print("%f %f", deaccelPoint, ticks);
+    controller1.Screen.print("%s", frontRight.rotation(deg));//"%f %f", deaccelPoint, ticks);
   }
 
   for (float i = maxSpeed; i > 0; i -= increment) {
@@ -150,66 +153,82 @@ void forwardGradual(float inches, int maxSpeed, int accelTime) {
   controller1.Screen.clearScreen();
   controller1.Screen.print("%s", "done");
   stopBase();
-  task::sleep(25);
 
+
+  task::sleep(15);
 
 }
 
 
-void turnLeftForDegrees(float degrees, int speed, bool wait = false) {
-  float ticks = inchesToTicks(CIRCUMFERENCE) * (degrees/380); // 360 Degrees adjusted for accuracy
+void turnLeftForDegrees(float degrees, int speed, bool wait = true) {
+  float ticks = inchesToTicks(CIRCUMFERENCE) * (degrees/360);
 
   frontRight.startRotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
   frontLeft.startRotateFor(directionType::rev, ticks, rotationUnits::deg, speed, velocityUnits::pct);
   rearRight.startRotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
   rearLeft.rotateFor(directionType::rev, ticks, rotationUnits::deg, speed, velocityUnits::pct);
+  if (!wait) {
+    rearLeft.startRotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
 
-
-  angle -= addAngle(degrees);
-
-  if (wait) {
+  } else {
+    rearLeft.rotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
     stopBase();
   }
-  task::sleep(25);
+  task::sleep(15);
 }
 
 
-void turnRightForDegrees(float degrees, int speed, bool wait = false) {
-  float ticks = inchesToTicks(CIRCUMFERENCE) * (degrees/380);
+void turnRightForDegrees(float degrees, int speed, bool wait = true) {
+  float ticks = inchesToTicks(CIRCUMFERENCE) * (degrees/360);
 
   frontRight.startRotateFor(directionType::rev, ticks, rotationUnits::deg, speed, velocityUnits::pct);
   frontLeft.startRotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
   rearRight.startRotateFor(directionType::rev, ticks, rotationUnits::deg, speed, velocityUnits::pct);
-  rearLeft.rotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
+  if (!wait) {
+    rearLeft.startRotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
 
-  angle += addAngle(degrees);
-
-  if (wait) {
+  } else {
+    rearLeft.rotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
     stopBase();
   }
-  task::sleep(25);
+  task::sleep(15);
+
 }
 
 
+void turnToDegrees(float degrees, int speed, bool wait = true) {
+  // Calculates fastest direction to angle and number of ticks to turn to angle
+  float turnDegrees = degrees - angleWrap(gyro1.value(rotationUnits::deg));
+  float ticks = inchesToTicks(CIRCUMFERENCE) * (turnDegrees/360);
 
-void turnToDegrees(float degrees, int speed, bool wait = false) {
-  float ticks = inchesToTicks(CIRCUMFERENCE) * (degrees/380);
-
+  // Right is forward, left is reverse because positive angles are to the right.
   frontRight.startRotateFor(directionType::rev, ticks, rotationUnits::deg, speed, velocityUnits::pct);
   frontLeft.startRotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
   rearRight.startRotateFor(directionType::rev, ticks, rotationUnits::deg, speed, velocityUnits::pct);
-  rearLeft.rotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
-  
-  if (wait) {
+  if (!wait) {
+    rearLeft.startRotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
+
+  } else {
+    rearLeft.rotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
     stopBase();
   }
-  task::sleep(25);
+  task::sleep(15);
+
 }
 
-void armToDegrees(float ticks,  int speed) {
-  armMotor.rotateTo(ticks, rotationUnits::deg);
-  armMotor.stop(brakeType::hold);
-  task::sleep(25);
+
+void armToDegrees(float ticks,  int speed, bool wait = true) {
+  if (ticks >= ARM_MAX) ticks = ARM_MAX;
+  if (ticks <= ARM_MIN) ticks = ARM_MIN;
+
+  if (!wait) {
+    armMotor.startRotateTo(ticks, rotationUnits::deg);
+
+  } else {
+    armMotor.rotateTo(ticks, rotationUnits::deg);
+    stopBase();
+  }
+  task::sleep(15);
 
 }
 
@@ -229,6 +248,7 @@ void pre_auton( void ) {
   // All activities that occur before the competition starts
   // Example: clearing encoders, setting servo positions, ...
   armMotor.resetRotation();
+  gyro1.startCalibration();
   
   
 }
@@ -264,10 +284,8 @@ void autonomous( void ) {
   turnLeftForDegrees(360, 20);
   task::sleep(1000);
   turnLeftForDegrees(360, 40);
-  controller1.Screen.print(angle);
 
   forwardGradual(48, 60, 3000);
-  controller1.Screen.print(angle);
 
 }
 
@@ -305,8 +323,8 @@ void usercontrol( void ) {
     
 
     float armSensitivity = 0.25;
-    if (controller1.ButtonR1.pressing()) armMotor.rotateTo(30, rotationUnits::deg, 100*armSensitivity, velocityUnits::pct);
-    else if (controller1.ButtonR2.pressing()) armMotor.rotateTo(0, rotationUnits::deg, 100*armSensitivity, velocityUnits::pct);
+    if (controller1.ButtonR1.pressing()) armMotor.rotateTo(ARM_MAX, rotationUnits::deg, 100*armSensitivity, velocityUnits::pct);
+    else if (controller1.ButtonR2.pressing()) armMotor.rotateTo(ARM_MIN, rotationUnits::deg, 100*armSensitivity, velocityUnits::pct);
     else armMotor.stop(brakeType::hold);
 
     //controller1.Screen.print(armMotor.rotation(rotationUnits::deg));
