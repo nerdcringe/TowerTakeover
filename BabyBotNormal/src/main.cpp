@@ -87,10 +87,19 @@ void setMotorSides(float leftSpeed, float rightSpeed) {
 
 
 void stopBase() {
-  frontRight.stop(brakeType::hold);
-  frontLeft.stop(brakeType::hold);
-  rearRight.stop(brakeType::hold);
-  rearLeft.stop(brakeType::hold);
+  frontRight.stop(brakeType::coast);
+  frontLeft.stop(brakeType::coast);
+  rearRight.stop(brakeType::coast);
+  rearLeft.stop(brakeType::coast);
+
+}
+
+
+void coastBase() {
+  frontRight.stop(brakeType::coast);
+  frontLeft.stop(brakeType::coast);
+  rearRight.stop(brakeType::coast);
+  rearLeft.stop(brakeType::coast);
 
 }
 
@@ -221,7 +230,7 @@ void turnToDegrees(float degrees, int speed, bool wait = true) {
   float ticks = inchesToTicks(CIRCUMFERENCE) * (turnDegrees/360);
   clearEncoders();
   // Positive angle turns right by default because positive angles are to the right (in this program).
-  while (abs(frontRight.rotation(rotationUnits::deg)+frontLeft.rotation(rotationUnits::deg)+rearRight.rotation(rotationUnits::deg)+rearLeft.rotation(rotationUnits::deg))/4 < ticks) {
+  while (fabs(frontRight.rotation(rotationUnits::deg)+frontLeft.rotation(rotationUnits::deg)+rearRight.rotation(rotationUnits::deg)+rearLeft.rotation(rotationUnits::deg))/4 < ticks) {
     frontRight.spin(directionType::rev, speed, velocityUnits::pct);
     frontLeft.spin(fwd, speed, velocityUnits::pct);
     rearRight.spin(directionType::rev, speed, velocityUnits::pct);
@@ -240,7 +249,7 @@ void turnToDegrees(float degrees, int speed, bool wait = true) {
 void turnToDegreesConstant(float degrees, int speed, bool wait = true) {
   // Calculates fastest direction to angle and number of ticks to turn to angle
   float turnDegrees = degrees - angleWrap(gyro1.value(rotationUnits::deg));
-  float ticks = inchesToTicks(CIRCUMFERENCE) * (turnDegrees/360);
+  float ticks = inchesToTicks(CIRCUMFERENCE) * (turnDegrees/390);
 
   // Right is forward, left is reverse because positive angles are to the right.
   frontRight.startRotateFor(directionType::rev, ticks, rotationUnits::deg, speed, velocityUnits::pct);
@@ -258,13 +267,12 @@ void turnToDegreesConstant(float degrees, int speed, bool wait = true) {
 }
 
 
-
-
-void turnRightToDegrees(float degrees, int maxSpeed) {
+/* boi.
+void turnRightToDegreesGradual(float degrees, int maxSpeed) {
   // Calculates fastest direction to angle and number of ticks to turn to angle
   
   float turnDegrees = degrees - angleWrap(gyro1.value(rotationUnits::deg));
-  float ticks = inchesToTicks(CIRCUMFERENCE) * (turnDegrees/395); // total revolution degrees adjusted from 360 because it increases accuracy for unknown reasons (probably build reasons)
+  float ticks = inchesToTicks(CIRCUMFERENCE) * (turnDegrees/380); // total revolution degrees adjusted from 360 because it increases accuracy for unknown reasons (probably build reasons)
 
   clearEncoders();
 
@@ -273,8 +281,10 @@ void turnRightToDegrees(float degrees, int maxSpeed) {
   bool peaked = false;
   float encoderAvg = 1;
   float trueSpeed;
-  while (encoderAvg < fabs(ticks)) {
-      encoderAvg = ((abs(frontRight.rotation(rotationUnits::deg))+abs(frontLeft.rotation(rotationUnits::deg))+abs(rearRight.rotation(rotationUnits::deg))+abs(rearLeft.rotation(rotationUnits::deg)))/4)+1;
+  //while (encoderAvg < fabs(ticks)) {
+    Brain.Screen.printAt(1, 30, "%f.3", gyro1.value(rotationUnits::deg) - degrees);
+    while (fabs(gyro1.value(rotationUnits::deg) - degrees) > 0.5) {
+      encoderAvg = ((fabs(frontRight.rotation(rotationUnits::deg))+fabs(frontLeft.rotation(rotationUnits::deg))+fabs(rearRight.rotation(rotationUnits::deg))+fabs(rearLeft.rotation(rotationUnits::deg)))/4)+1;
       
       float accel = (2*maxSpeed)/ticks;
       if (encoderAvg > ticks/2 && !peaked) {
@@ -283,12 +293,11 @@ void turnRightToDegrees(float degrees, int maxSpeed) {
       }
 
       // Speed calculated using absolute value function (slower in beginning and end and faster in middle)
-      trueSpeed = -(accel*abs(int(round(encoderAvg-peak)))) + maxSpeed;
-      if (!peaked) { // Give it a little boost for the first half (makes acceleration 3* as fast up until the)
-        trueSpeed *= 3;
+      trueSpeed = -(accel*fabs((encoderAvg-peak))) + maxSpeed;
+      if (!peaked) { // Make it accelerate faster in the first half, still being capped at maxSpeed
+        trueSpeed *= 4;
         trueSpeed = restrictToRange(trueSpeed, 1, maxSpeed); // Minimal speed is one when it starts so it doesn't stay at zero and do nothing
       } else trueSpeed = restrictToRange(trueSpeed, 0, maxSpeed);
-
       
       // Right is reversed, left is forward because positive angles are to the right and reverse turns in that direction.
       frontRight.spin(directionType::rev, trueSpeed, velocityUnits::pct);
@@ -298,80 +307,95 @@ void turnRightToDegrees(float degrees, int maxSpeed) {
       Brain.Screen.printAt(1, 120, "Traveled: %.3f Total: %.3f", encoderAvg, ticks);
       Brain.Screen.printAt(1, 140, "True speed: %.3f, Acceleration: %.3f", trueSpeed, accel);
       Brain.Screen.printAt(1, 160, "Peak ticks: %.3f, Max speed: %.3f", peak, maxSpeed);
-      Brain.Screen.printAt(200, 230, "Finished: %f.2", encoderAvg/ticks);
-
-      if (fabs(gyro1.value(rotationUnits::deg)) > fabs(degrees)) { // Makeshift PID stops robot from oversteering
-        float error = gyro1.value(rotationUnits::deg) - degrees;
-        // Left is negative, since to counteract right it needs to turn left
-        frontRight.startRotateFor(error, rotationUnits::deg, trueSpeed, velocityUnits::pct);
-        frontLeft.startRotateFor(error , rotationUnits::deg, -trueSpeed, velocityUnits::pct);
-        rearRight.startRotateFor(error, rotationUnits::deg, trueSpeed, velocityUnits::pct);
-        rearLeft.rotateFor(error, rotationUnits::deg, -trueSpeed, velocityUnits::pct);
-        stopBase();
+      
+      if ((peaked && trueSpeed < 1) || (fabs(gyro1.value(rotationUnits::deg) - degrees) < 1)) { // Makes sure it is completely over if robot stops
+        if (fabs(gyro1.value(rotationUnits::deg)) > fabs(degrees)) { // Makeshift PID stops robot from oversteering
+          float error = fabs(gyro1.value(rotationUnits::deg) - degrees);
+          // Left is negative, since to counteract right it needs to turn left
+          frontRight.startRotateFor(error, rotationUnits::deg, 5, velocityUnits::pct);
+          frontLeft.startRotateFor(error , rotationUnits::deg, -5, velocityUnits::pct);
+          rearRight.startRotateFor(error, rotationUnits::deg, 5, velocityUnits::pct);
+          rearLeft.rotateFor(error, rotationUnits::deg, -5, velocityUnits::pct);
+        }
         break;
+      
       }
   }
-  
+  Brain.Screen.printAt(200, 180, "Finished: %f.2", encoderAvg/ticks);
   stopBase();
   
+  task::sleep(15);
+
+}
+*/
+
+
+void turnLeftToDegrees(float degrees, int maxSpeed) {
+  // Calculates fastest direction to angle and number of ticks to turn to angle
+  float initialDegrees = angleWrap(gyro1.value(rotationUnits::deg));
+  float turnDegrees = -degrees - initialDegrees;
+  
+  float targetRange = 0.5; // Distance from the desired angle that is allowed
+  float error = turnDegrees; // Distance from the desired range
+  float minSpeed = 2;
+  float trueSpeed;
+
+  clearEncoders();
+  maxSpeed = restrictToRange(maxSpeed, 0, 100);
+
+  while (fabs(error) > targetRange) {
+    error = gyro1.value(rotationUnits::deg) + degrees;
+    trueSpeed = (error/degrees*maxSpeed)+minSpeed; // Speed approaches one as the angle approaches the desired value
+
+    // Left is reversed, right is forward because positive angles are to the right and reverse on that side turns in that direction.
+    frontRight.spin(fwd, trueSpeed, velocityUnits::pct);
+    frontLeft.spin(directionType::rev, trueSpeed, velocityUnits::pct);
+    rearRight.spin(fwd, trueSpeed, velocityUnits::pct);
+    rearLeft.spin(directionType::rev, trueSpeed, velocityUnits::pct);
+    Brain.Screen.printAt(1, 140, "True speed: %.2f, error: %.2f", trueSpeed, error);
+    Brain.Screen.printAt(1, 180, "Error: %f.2", error);
+  }
+
+  stopBase();
+  Brain.Screen.printAt(1, 200, "Gyro: %.2f", gyro1.value(rotationUnits::deg));
   task::sleep(15);
 
 }
 
 
 
-void turnLeftToDegrees(float degrees, int maxSpeed) {
+void turnRightToDegrees(float degrees, int maxSpeed) {
   // Calculates fastest direction to angle and number of ticks to turn to angle
+  float initialDegrees = angleWrap(gyro1.value(rotationUnits::deg));
+  float turnDegrees = -degrees - initialDegrees;
   
-  float turnDegrees = degrees - angleWrap(gyro1.value(rotationUnits::deg));
-  float ticks = inchesToTicks(CIRCUMFERENCE) * (turnDegrees/395); // total revolution degrees adjusted from 360 because it increases accuracy for unknown reasons (probably build reasons)
+  float targetRange = 0.5; // Distance from the desired angle that is allowed. It stops when it gets within that range
+  float error = turnDegrees; // Distance from the desired range
+  float trueSpeed;
+  float minSpeed = 3;
 
   clearEncoders();
-
   maxSpeed = restrictToRange(maxSpeed, 0, 100);
-  float peak = ticks/2;
-  bool peaked = false;
-  float encoderAvg = 1;
-  float trueSpeed;
-  while (encoderAvg < fabs(ticks)) {
-      encoderAvg = ((abs(frontRight.rotation(rotationUnits::deg))+abs(frontLeft.rotation(rotationUnits::deg))+abs(rearRight.rotation(rotationUnits::deg))+abs(rearLeft.rotation(rotationUnits::deg)))/4)+1;
-      
-      float accel = (2*maxSpeed)/ticks;
-      if (encoderAvg > ticks/2 && !peaked) {
-          Brain.Screen.printAt(250, 200, "Peak %: %f.3", trueSpeed);
-          peaked = true;
-      }
 
-      // Speed calculated using absolute value function (slower in beginning and end and faster in middle)
-      trueSpeed = -(accel*abs(int(round(encoderAvg-peak)))) + maxSpeed;
-      if (!peaked) { // Give it a little boost for the first half (makes acceleration 3* as fast up until the)
-        trueSpeed *= 3;
-        trueSpeed = restrictToRange(trueSpeed, 1, maxSpeed); // Minimal speed is one when it starts so it doesn't stay at zero and do nothing
-      } else trueSpeed = restrictToRange(trueSpeed, 0, maxSpeed);
+  while (fabs(error) > targetRange) {
+    error = -gyro1.value(rotationUnits::deg) + degrees;
 
-      
-      // Left is reversed, right is forward because positive angles are to the left in this function and reverse turns in that direction.
-      frontRight.spin(fwd, trueSpeed, velocityUnits::pct);
-      frontLeft.spin(directionType::rev, trueSpeed, velocityUnits::pct);
-      rearRight.spin(fwd, trueSpeed, velocityUnits::pct);
-      rearLeft.spin(directionType::rev, trueSpeed, velocityUnits::pct);
-      Brain.Screen.printAt(1, 120, "Traveled: %.3f Total: %.3f", encoderAvg, ticks);
-      Brain.Screen.printAt(1, 140, "True speed: %.3f, Acceleration: %.3f", trueSpeed, accel);
-      Brain.Screen.printAt(1, 160, "Peak ticks: %.3f, Max speed: %.3f", peak, maxSpeed);
-      Brain.Screen.printAt(200, 230, "Finished: %f.2", encoderAvg/ticks);
+    trueSpeed = (error/degrees*maxSpeed)+minSpeed; // Speed approaches one as the angle approaches the desired value
 
-      if (fabs(gyro1.value(rotationUnits::deg)) > fabs(degrees)) { // Makeshift PID stops robot from oversteering
-        float error = gyro1.value(rotationUnits::deg) - degrees;
-        // Right is negative, since to counteract left it needs to turn left
-        frontRight.startRotateFor(error, rotationUnits::deg, -trueSpeed, velocityUnits::pct);
-        frontLeft.startRotateFor(error , rotationUnits::deg, trueSpeed, velocityUnits::pct);
-        rearRight.startRotateFor(error, rotationUnits::deg, -trueSpeed, velocityUnits::pct);
-        rearLeft.rotateFor(error, rotationUnits::deg, trueSpeed, velocityUnits::pct);
-        stopBase();
-        break;
-      }
+    // Right is reversed, left is forward because positive angles are to the right and reverse turns in that direction.
+    frontLeft.spin(fwd, trueSpeed, velocityUnits::pct);
+    frontRight.spin(directionType::rev, trueSpeed, velocityUnits::pct);
+    rearLeft.spin(fwd, trueSpeed, velocityUnits::pct);
+    rearRight.spin(directionType::rev, trueSpeed, velocityUnits::pct);
+    Brain.Screen.printAt(1, 140, "True speed: %.2f, error: %.2f", trueSpeed, error);
+    Brain.Screen.printAt(1, 180, "Error: %f.2", error);
   }
-  
+
+  stopBase();
+  Brain.Screen.printAt(1, 200, "Gyro: %.2f", gyro1.value(rotationUnits::deg));
+  task::sleep(15);
+
+}
 
 
 
@@ -394,28 +418,28 @@ void armToDegrees(float ticks,  int speed, bool wait = true) {
 
 void prep() {
   gyro1.startCalibration(5000);
-  task::sleep(2000);
+  task::sleep(3000);
 }
+
 
 
 void auto1() {
-  turnRightToDegrees(360, 50);
-  /*task::sleep(2000);
-  turnToDegrees(180, 25);
-  task::sleep(2000);
-  turnToDegrees(270, 25);
-  task::sleep(2000);
-  turnToDegrees(0, 25);
-  task::sleep(2000);
-  turnToDegrees(180, 25);
-*/
+  turnLeftToDegrees(180, 50);
+  
+  Brain.Screen.printAt(0, 220, "1");
+  turnRightToDegrees(45, 25);
+  Brain.Screen.printAt(0, 220, "2");
+  //turnRightToDegrees(45, 50);
+
+
 }
+
 
 
 void loop() {
 
 float sensitivity = 0.65;
-        Brain.Screen.printAt(140,115, "Gyro %.3f degrees", gyro1.value(rotationUnits::deg));
+        
 
     /*
     int leftSpeed = controller1.Axis3.value()*sensitivity;
