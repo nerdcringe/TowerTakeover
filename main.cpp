@@ -1,3 +1,25 @@
+// To complete the VEXcode V5 Text project upgrade process, please follow the
+// steps below.
+// 
+// 1. You can use the Robot Configuration window to recreate your V5 devices
+//   - including any motors, sensors, 3-wire devices, and controllers.
+// 
+// 2. All previous code located in main.cpp has now been commented out. You
+//   will need to migrate this code to the new "int main" structure createds
+//   below and keep in mind any new device names you may have set from the
+//   Robot Configuration window. 
+// 
+// If you would like to go back to your original project, a complete backup
+// of your original (pre-upgraded) project was created in a backup folder
+// inside of this project's folder.
+
+
+#include "vex.h"
+
+using namespace vex;
+
+
+
 /*----------------------------------------------------------------------------*/
 /*                                                                            */
 /*    Module:       main.cpp                                                  */
@@ -6,26 +28,9 @@
 /*    Description:  V5 project                                                */
 /*                                                                            */
 /*----------------------------------------------------------------------------*/
-#include "vex.h"
-#include <iostream>
+
+
 #define PI 3.14159265
-
-using namespace vex;
-// A global instance of vex::brain used for printing to the V5 brain screen
-brain Brain;
-// A global instance of vex::competition
-competition Competition;
-
-// define your global instances of motors and other devices here
-
-controller controller1;
-
-motor frontRight(PORT2, true);
-motor frontLeft(PORT4);
-motor rearRight(PORT1, true);
-motor rearLeft(PORT3);
-motor hammerMotor(PORT5);
-gyro gyro1(Brain.ThreeWirePort.H);
 
 
 // USE INCHES!!!
@@ -34,11 +39,11 @@ const float WHEEL_CIRCUMFERENCE = 3.25 * PI;
 
 const float TRACK_WIDTH = 7.5; // Width between right and left wheels
 const float WHEEL_BASE = 4.5; // Length between front and back
-const float DIAGONAL = sqrt(pow(TRACK_WIDTH, 2) + pow(WHEEL_BASE, 2)); // Calculate DIAGONAL distance between nonadjacent wheels using pythagorean theorum
-const float CIRCUMFERENCE = DIAGONAL*PI; // Calculate CIRCUMFERENCE of circle in which the wheel.
-
-const static float HAMMER_FULLY_ERECT = 30;
-const static float HAMMER_FULLY_DEPRESSED = 0;
+const float CIRCUMDIAMETER = sqrt(pow(TRACK_WIDTH, 2) + pow(WHEEL_BASE, 2)); // Calculate diagonal distance between nonadjacent wheels using pythagorean theorum
+const float CIRCUMFERENCE = CIRCUMDIAMETER*PI; // Calculate circumference of circle which circumscribes rect of wheel contact points to ground.
+ 
+const static float ARM_MAX = 30;
+const static float ARM_MIN = 0;
 
 
 float inchesToTicks(float inches) {
@@ -47,32 +52,54 @@ float inchesToTicks(float inches) {
 
 }
 
+float ticksToInches(float ticks) {
+  float inches = (ticks * WHEEL_CIRCUMFERENCE) / 360;
+  return inches;
 
+}
+
+/*
 float angleWrap(float degrees) {
-  float angle = 0;
-  angle += degrees;
-  while (angle >= 360) angle-=360;
-  while (angle < -0) angle -= 360;
-  return angle;
+  // Keeps angle within range 0 to 360 while preserving angle measure
+  while (degrees >= 360) degrees -=360;
+  while (degrees < 0) degrees += 360;
+  return degrees;
+
+}*/
+
+
+float restrictToRange(float number, float bottom, float top) {
+  Brain.Screen.printAt(200, 175, "%.3f", number);
+  if (number < bottom) number = bottom;
+  if (number > top) number = top;
+   return number;
+ }
+
+
+// Movement functions
+
+void setMotors(float leftSpeed, float rightSpeed) {
+  frontRight.spin(fwd, rightSpeed, pct);
+  frontLeft.spin(fwd, leftSpeed, pct);
+  rearRight.spin(fwd, rightSpeed, pct);
+  rearLeft.spin(fwd, leftSpeed, pct);
 
 }
 
 
-void setMotorSides(float leftSpeed, float rightSpeed) {
-  frontRight.spin(fwd, rightSpeed, velocityUnits::pct);
-  frontLeft.spin(fwd, leftSpeed, velocityUnits::pct);
-  rearRight.spin(fwd, rightSpeed, velocityUnits::pct);
-  rearLeft.spin(fwd, leftSpeed, velocityUnits::pct);
+void stopBase(float PID = true) {
+  if (PID) {
+    frontRight.stop(brakeType::hold);
+    frontLeft.stop(brakeType::hold);
+    rearRight.stop(brakeType::hold);
+    rearLeft.stop(brakeType::hold);
+  } else {
+    frontRight.stop(brakeType::coast);
+    frontLeft.stop(brakeType::coast);
+    rearRight.stop(brakeType::coast);
+    rearLeft.stop(brakeType::coast);
 
-}
-
-
-void stopBase() {
-  frontRight.stop(brakeType::hold);
-  frontLeft.stop(brakeType::hold);
-  rearRight.stop(brakeType::hold);
-  rearLeft.stop(brakeType::hold);
-
+  }
 }
 
 
@@ -82,263 +109,228 @@ void clearEncoders(){
   rearRight.resetRotation();
   rearLeft.resetRotation();
 
-
 }
 
 
-void forwardForInches(float inches, int speed, bool wait = true) {
-  float ticks = inchesToTicks(inches);
-
-  frontRight.startRotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
-  frontLeft.startRotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
-  rearRight.startRotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
-  rearLeft.rotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
-  // Start motor and move on if wait == false, else wait for target to be reached and stop motors
-  if (!wait) {
-    rearLeft.startRotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
-
-  } else {
-    rearLeft.rotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
-    stopBase();
-  }
-  task::sleep(15);
 
 
-}
+void gyroTurn(float degrees, int maxSpeed) {
 
+  float initialAngle = gyro1.value(deg);
+  // positive degrees == right; negative degrees == left
+  float turnDegrees = degrees-gyro1.value(deg);
 
-void forwardGradual(float inches, int maxSpeed, int accelTime) {
-  float ticks = inchesToTicks(inches);
-  float increment = 1;
-  float speed = increment;
+  float targetRange = 0.5; // Distance from the desired angle that is allowed
+  float error = turnDegrees; // Distance from the desired range
+  float progress; // Degrees the robot has turned already
+  float minSpeed = 2; // Lowest speed the motors will go; Turning is generally more precise and accurate when lower.
+  float speed; // Actual speed value of the motors
 
-  clearEncoders();
-   //Gradually accelerate for accelTime and reach desired speed.
-  for (float i = 0; i <= maxSpeed; i += increment) {
-    speed = round(i);
-    frontRight.setVelocity(speed, velocityUnits::pct);
-    frontLeft.setVelocity(speed, velocityUnits::pct);
-    rearRight.setVelocity(speed, velocityUnits::pct);
-    rearLeft.setVelocity(speed, velocityUnits::pct);
+  maxSpeed = restrictToRange(maxSpeed, 0, 100);
+  
+  while (fabs(error) > targetRange) {
+    progress = gyro1.value(deg)-initialAngle;
 
-    frontRight.spin(fwd, speed, velocityUnits::pct);
-    frontLeft.spin(fwd, speed, velocityUnits::pct);
-    rearRight.spin(fwd, speed, velocityUnits::pct);
-    rearLeft.spin(fwd, speed, velocityUnits::pct);
-    task::sleep(increment/accelTime);
-    controller1.Screen.print(speed);
-  }
+    /*if (turnDegrees < 0) error = -turnDegrees+progress;
+    else */error = progress-turnDegrees;
 
-  float deaccelPoint = ticks - (increment*maxSpeed);
-
-  while ((frontRight.rotation(deg)+frontLeft.rotation(deg)+rearRight.rotation(deg)+rearLeft.rotation(deg))/4 < deaccelPoint) {
-    // Wait until the moment when motor rotation is the correct degrees away from desired wheel rotation.
-    controller1.Screen.print("%s", frontRight.rotation(deg));//"%f %f", deaccelPoint, ticks);
-  }
-
-  for (float i = maxSpeed; i > 0; i -= increment) {
-    speed = round(i);
-    frontRight.setVelocity(speed, velocityUnits::pct);
-    frontLeft.setVelocity(speed, velocityUnits::pct);
-    rearRight.setVelocity(speed, velocityUnits::pct);
-    rearLeft.setVelocity(speed, velocityUnits::pct);
+    speed = ((1-(progress/turnDegrees))*maxSpeed)+minSpeed; // Speed starts at maximum and approaches minimum as the gyro value approaches the desired angle. It deccelerates for precision and accuray.
     
-    frontRight.spin(fwd, speed, velocityUnits::pct);
-    frontLeft.spin(fwd, speed, velocityUnits::pct);
-    rearRight.spin(fwd, speed, velocityUnits::pct);
-    rearLeft.spin(fwd, speed, velocityUnits::pct);
-    task::sleep(increment/accelTime);
-    controller1.Screen.print("%s %d", "deaccelerating", speed);
+    speed = restrictToRange(speed, 0, maxSpeed);
+
+    if (turnDegrees < 0) {
+      frontRight.spin(forward, speed, pct);
+      frontLeft.spin(reverse, speed, pct);
+      rearRight.spin(forward, speed, pct);
+      rearLeft.spin(reverse, speed, pct);
+    } else {
+      frontLeft.spin(forward, speed, pct);
+      frontRight.spin(reverse, speed, pct);
+      rearLeft.spin(forward, speed, pct);
+      rearRight.spin(reverse, speed, pct);
+    }
+
+    Brain.Screen.printAt(1, 120, "Desired angle: %.2f, Turn degrees: %.2f", degrees, turnDegrees);
+    Brain.Screen.printAt(1, 140, "Speed: %.2f, Error: %.2f", speed, error);
+    Brain.Screen.printAt(1, 180, "Gyro: %.2f", gyro1.value(deg));
+
   }
 
-  controller1.Screen.clearScreen();
-  controller1.Screen.print("%s", "done");
   stopBase();
-
-
   task::sleep(15);
 
 }
 
 
-void turnLeftForDegrees(float degrees, int speed, bool wait = true) {
-  float ticks = inchesToTicks(CIRCUMFERENCE) * (degrees/360);
 
-  frontRight.startRotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
-  frontLeft.startRotateFor(directionType::rev, ticks, rotationUnits::deg, speed, velocityUnits::pct);
-  rearRight.startRotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
-  rearLeft.rotateFor(directionType::rev, ticks, rotationUnits::deg, speed, velocityUnits::pct);
+void forwardInches(float inches, int maxSpeed) {
+  float ticks = inchesToTicks(inches);
+  float initialAngle = gyro1.value(deg);
+
+  float targetRange = 0.5; // Distance from the desired distance the robot has to be to stop.
+  float error = ticks; // Distance from the desired range
+  float progress; // Ticks the motors has turned already
+  float minSpeed = 2; // Lowest speed the motors will go; Turning is generally more precise and accurate when lower.
+  float speed; // Actual speed value of the motors
+
+  maxSpeed = restrictToRange(maxSpeed, 0, 100);
+  clearEncoders();
+
+  while (error > targetRange) {
+
+    progress = (frontLeft.rotation(deg)+frontRight.rotation(deg)+rearLeft.rotation(deg)+rearRight.rotation(deg))/4; // Average value of all motors
+    error = ticks-progress;
+    
+    // First half: accelerate to max; Second half, deccelerate to min
+    if (error >= ticks/2) speed = (((progress/ticks))*maxSpeed*6)+minSpeed;
+    else speed = ((1-(progress/ticks))*maxSpeed*3)+minSpeed;
+    speed = restrictToRange(speed, minSpeed, maxSpeed);
+
+    frontRight.spin(forward, speed, pct);
+    frontLeft.spin(forward, speed, pct);
+    rearRight.spin(forward, speed, pct);
+    rearLeft.spin(forward, speed, pct);
+
+    Brain.Screen.printAt(1, 120, "Desired distance: %.2f, Progress: %.2f", ticksToInches(ticks), ticksToInches(progress));
+    Brain.Screen.printAt(1, 140, "Speed: %.2f, Error: %.2f", speed, error);
+
+  }
+
+  stopBase();
+  task::sleep(15);
+
+}
+
+
+
+void backwardInches(float inches, int maxSpeed) {
+  float ticks = inchesToTicks(inches);
+  float initialAngle = gyro1.value(deg);
+
+  float targetRange = 0.5; // Distance from the desired distance the robot has to be to stop.
+  float error = ticks; // Distance from the desired range
+  float progress; // Ticks the motors has turned already
+  float minSpeed = 2; // Lowest speed the motors will go; Turning is generally more precise and accurate when lower.
+  float speed; // Actual speed value of the motors
+
+  maxSpeed = restrictToRange(maxSpeed, 0, 100);
+  clearEncoders();
+
+  while (error > targetRange) {
+
+    progress = - (frontLeft.rotation(deg));//(frontLeft.rotation(deg)+frontRight.rotation(deg)+rearLeft.rotation(deg)+rearRight.rotation(deg))/4; // Average value of all motors
+    error = ticks-progress;
+
+    // First half: accelerate to max; Second half, deccelerate to min
+    if (error >= ticks/2) speed = (((progress/ticks))*maxSpeed*5)+minSpeed;
+    else speed = ((1-(progress/ticks))*maxSpeed*2)+minSpeed;
+    speed = restrictToRange(speed, minSpeed, maxSpeed);
+
+    frontRight.spin(reverse, speed, pct);
+    frontLeft.spin(reverse, speed, pct);
+    rearRight.spin(reverse, speed, pct);
+    rearLeft.spin(reverse, speed, pct);
+
+    Brain.Screen.printAt(1, 120, "Desired distance: %.2f, Progress: %.2f", ticksToInches(ticks), ticksToInches(progress));
+    Brain.Screen.printAt(1, 140, "Speed: %.2f, Error: %.2f", speed, error);
+
+  }
+
+  /*task::sleep(1000);
+  Brain.Screen.printAt(1, 160, "Turning from to: %.2f", gyro1.value(deg));
+  gyroTurn(initialAngle, maxSpeed);
+  
+  task::sleep(1500);*/
+  stopBase();
+  task::sleep(15);
+
+}
+
+
+
+void armToDegrees(float ticks,  int speed, bool wait = true) {
+  if (ticks >= ARM_MAX) ticks = ARM_MAX;
+  if (ticks <= ARM_MIN) ticks = ARM_MIN;
+
   if (!wait) {
-    rearLeft.startRotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
+    armMotor.startRotateTo(ticks, rotationUnits::deg);
 
   } else {
-    rearLeft.rotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
+    armMotor.rotateTo(ticks, rotationUnits::deg);
     stopBase();
   }
   task::sleep(15);
 }
 
 
-void turnRightForDegrees(float degrees, int speed, bool wait = true) {
-  float ticks = inchesToTicks(CIRCUMFERENCE) * (degrees/360);
-
-  frontRight.startRotateFor(directionType::rev, ticks, rotationUnits::deg, speed, velocityUnits::pct);
-  frontLeft.startRotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
-  rearRight.startRotateFor(directionType::rev, ticks, rotationUnits::deg, speed, velocityUnits::pct);
-  if (!wait) {
-    rearLeft.startRotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
-
-  } else {
-    rearLeft.rotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
-    stopBase();
-  }
-  task::sleep(15);
-}
 
 
-void turnToDegrees(float degrees, int speed, bool wait = true) {
-  float turnDegrees = degrees - angleWrap(gyro1.value(analogUnits::pct));
-  float ticks = inchesToTicks(CIRCUMFERENCE) * (turnDegrees/360);
+void prep() {
 
-  // Right is forward, left is reverse because positive angles are to the right.
-  frontRight.startRotateFor(directionType::rev, ticks, rotationUnits::deg, speed, velocityUnits::pct);
-  frontLeft.startRotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
-  rearRight.startRotateFor(directionType::rev, ticks, rotationUnits::deg, speed, velocityUnits::pct);
-  if (!wait) {
-    rearLeft.startRotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
-
-  } else {
-    rearLeft.rotateFor(ticks, rotationUnits::deg, speed, velocityUnits::pct);
-    stopBase();
-  }
-  task::sleep(15);
+  gyro1.startCalibration(5000);
+  task::sleep(2000);
 
 }
+ 
 
 
-void hammerToDegrees(float ticks,  int speed) {
-  if (ticks >= HAMMER_FULLY_ERECT) ticks = HAMMER_FULLY_ERECT;
-  if (ticks <= HAMMER_FULLY_DEPRESSED) ticks = HAMMER_FULLY_DEPRESSED;
-
-  hammerMotor.startRotateTo(ticks, rotationUnits::deg);
-  task::sleep(15);
-
-}
-
-
-
-/*---------------------------------------------------------------------------*/
-/*                          Pre-Autonomous Functions                         */
-/*                                                                           */
-/*  You may want to perform some actions before the competition starts.      */
-/*  Do them in the following function.  You must return from this function   */
-/*  or the autonomous and usercontrol tasks will not be started.  This       */
-/*  function is only called once after the cortex has been powered on and    */
-/*  not every time that the robot is disabled.                               */
-/*---------------------------------------------------------------------------*/
-
-void pre_auton( void ) {
-  // All activities that occur before the competition starts
-  // Example: clearing encoders, setting servo positions, ...
-  hammerMotor.resetRotation();
-  gyro1.startCalibration();
+void auto1() {
   
-  
-}
+  //forwardInches(24, 90);
+  //backwardInches(24, 50);
+  gyroTurn(90, 75);
+  gyroTurn(-90, 75);
+  gyroTurn(0, 75);
 
-/*---------------------------------------------------------------------------*/
-/*                                                                           */
-/*                              Autonomous Task                              */
-/*                                                                           */
-/*  This task is used to control your robot during the autonomous phase of   */
-/*  a VEX Competition.                                                       */
-/*                                                                           */
-/*  You must modify the code to add your own robot specific commands here.   */
-/*---------------------------------------------------------------------------*/
-
-void autonomous( void ) {
-  // ..........................................................................
-  // Insert autonomous user code here.
-  // .........................................................................
-  
-  forwardForInches(24, 30);
-  hammerToDegrees(45, 10);
-  hammerToDegrees(0, 10);
-  forwardForInches(24, 30);
-  task::sleep(750);
-  turnLeftForDegrees(45, 30);
-  task::sleep(1000);
-  turnLeftForDegrees(90, 20);
-  task::sleep(1000);
-  turnLeftForDegrees(45, 10);
-  task::sleep(1500);
-  turnLeftForDegrees(360, 30);
-  task::sleep(1000);
-  turnLeftForDegrees(360, 20);
-  task::sleep(1000);
-  turnLeftForDegrees(360, 40);
-
-  forwardGradual(48, 60, 3000);
 
 }
 
-/*---------------------------------------------------------------------------*/
-/*                                                                           */
-/*                              User Control Task                            */
-/*                                                                           */
-/*  This task is used to control your robot during the user control phase of */
-/*  a VEX Competition.                                                       */
-/*                                                                           */
-/*  You must modify the code to add your own robot specific commands here.   */
-/*---------------------------------------------------------------------------*/
 
-void usercontrol( void ) {
 
-  while (true) {
+void loop() {
+  float sensitivity = 0.65;
 
-    float sensitivity = 0.65;
+  /*
+  int leftSpeed = controller1.Axis3.value()*sensitivity;
+  int rightSpeed = controller1.Axis2.value()*sensitivity;
+  */
+
+  int forwardSpeed = controller1.Axis3.value()/2;
+  int turnSpeed = controller1.Axis1.value();
+
+  int leftSpeed = forwardSpeed + round(turnSpeed/2);
+  int rightSpeed = forwardSpeed - round(turnSpeed/2);
     
-    /*
-    int leftSpeed = controller1.Axis3.value()*sensitivity;
-    int rightSpeed = controller1.Axis2.value()*sensitivity;
-    */
+  frontRight.spin(fwd, rightSpeed*sensitivity, velocityUnits::pct);
+  frontLeft.spin(fwd, leftSpeed*sensitivity, velocityUnits::pct);
+  rearRight.spin(fwd, rightSpeed*sensitivity, velocityUnits::pct);
+  rearLeft.spin(fwd, leftSpeed*sensitivity, velocityUnits::pct);
+      
+  float armSensitivity = 0.25;
+  if (controller1.ButtonR1.pressing()) armMotor.rotateTo(ARM_MAX, rotationUnits::deg, 100*armSensitivity, velocityUnits::pct);
+  else if (controller1.ButtonR2.pressing()) armMotor.rotateTo(ARM_MIN, rotationUnits::deg, 100*armSensitivity, velocityUnits::pct);
+  else armMotor.stop(brakeType::hold);
 
-    int forwardSpeed = controller1.Axis3.value()/2;
-    int turnSpeed = controller1.Axis1.value();
 
-    int leftSpeed = forwardSpeed + round(turnSpeed/2);
-    int rightSpeed = forwardSpeed - round(turnSpeed/2);
-    
-    frontRight.spin(fwd, rightSpeed*sensitivity, velocityUnits::pct);
-    frontLeft.spin(fwd, leftSpeed*sensitivity, velocityUnits::pct);
-    rearRight.spin(fwd, rightSpeed*sensitivity, velocityUnits::pct);
-    rearLeft.spin(fwd, leftSpeed*sensitivity, velocityUnits::pct);
-    
-
-    float hammerSensitivity = 0.25;
-    if (controller1.ButtonR1.pressing()) hammerMotor.rotateTo(HAMMER_FULLY_ERECT, rotationUnits::deg, 100*hammerSensitivity, velocityUnits::pct);
-    else if (controller1.ButtonR2.pressing()) hammerMotor.rotateTo(HAMMER_FULLY_DEPRESSED, rotationUnits::deg, 100*hammerSensitivity, velocityUnits::pct);
-    else hammerMotor.stop(brakeType::hold);
-
-    //controller1.Screen.print(hammerMotor.rotation(rotationUnits::deg));
-    //vex::task::sleep(20); //Sleep the task for a short amount of time to prevent wasted resources. 
-  }
 }
 
-//
-// Main will set up the competition functions and callbacks.
-//
+
+
 int main() {
-    //Set up callbacks for autonomous and driver control periods.
-    Competition.autonomous( autonomous );
-    Competition.drivercontrol( usercontrol );
-    
-    //Run the pre-autonomous function. 
-    pre_auton();
-       
-    //Prevent main from exiting with an infinite loop.                        
-    while(1) {
-      vex::task::sleep(100);//Sleep the task for a short amount of time to prevent wasted resources.
-    }    
-       
+  // Initializing Robot Configuration. DO NOT REMOVE!
+  vexcodeInit();
+  prep();
+  auto1();
+  //task::sleep(500);
+  //stopBase(false);
+
+  Brain.Screen.printAt(200, 50, "Callibrating: %s", gyro1.isCalibrating());
+  int frames=0;
+  while(true) {
+
+    loop();
+    Brain.Screen.printAt(10,50, "Time %d", frames++);
+    Brain.Screen.printAt(30,95, "Gyro: %6.2f", gyro1.value(rotationUnits::deg));
+
+   }
 }
